@@ -2,17 +2,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 import { useTranslation } from 'next-i18next';
+import { useRouter } from 'next/router';
+import { Line } from 'react-chartjs-2';
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend } from 'chart.js';
 import { fetchExchangeRates } from '../lib/api';
 import { ExchangeRatesResponse } from '../types/apiTypes';
 import { formatCurrency } from '../utils/formatCurrency';
-import { useRouter } from 'next/router';
+import Modal from './Modal';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 export function ExchangeRates() {
   const { t, ready } = useTranslation('common');
-  const { data, error } = useSWR<ExchangeRatesResponse>('/api/exchange-rates', fetchExchangeRates, {
-    refreshInterval: 60000 // Refresh every minute
-  });
   const { locale } = useRouter();
+  const { data, error } = useSWR<ExchangeRatesResponse>('/api/exchange-rates', fetchExchangeRates, {
+    refreshInterval: 6000 // Refresh every minute
+  });
 
   const previousData = useRef<ExchangeRatesResponse | null>(null);
   const [ratesChange, setRatesChange] = useState<{ [key: string]: 'up' | 'down' | 'same' }>({});
@@ -81,6 +86,32 @@ export function ExchangeRates() {
 
   const baseURL = '/icons/';
 
+  const handleCryptoClick = (key: string) => {
+    setSelectedCrypto(key);
+    setShowModal(true);
+  };
+
+  const chartData = {
+    labels: Array.from({ length: lastRates[selectedCrypto]?.length }, (_, i) => i + 1),
+    datasets: [
+      {
+        label: `${selectedCrypto}/EUR`,
+        data: lastRates[selectedCrypto],
+        fill: false,
+        backgroundColor: 'rgba(75,192,192,0.4)',
+        borderColor: 'rgba(75,192,192,1)',
+      },
+    ],
+  };
+
+  const chartOptions = {
+    scales: {
+      y: {
+        beginAtZero: false,
+      },
+    },
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
       <h1 className="text-xl font-bold text-center text-discordAccent">{t('crypto_exchange_rates')}</h1>
@@ -95,10 +126,10 @@ export function ExchangeRates() {
               className="h-8 w-8 mr-2"
             />
             <p className="text-lg text-green-700">
-              {mostGrowingCrypto.key}/EUR: {formatCurrency(parseFloat(data.data.rates[mostGrowingCrypto.key]), locale)}
+              {mostGrowingCrypto.key}/EUR: {formatCurrency(parseFloat(data.data.rates[mostGrowingCrypto.key]), locale!)}
             </p>
           </div>
-          <p className="text-green-700">{t('rate_change')}: {formatCurrency(mostGrowingCrypto.change, locale)}</p>
+          <p className="text-green-700">{t('rate_change')}: {formatCurrency(mostGrowingCrypto.change, locale!)}</p>
         </div>
       )}
       <div className="mt-6 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -106,10 +137,7 @@ export function ExchangeRates() {
           <div
             key={key}
             className={`col-span-1 flex shadow-sm rounded-md ${mostGrowingCrypto && key === mostGrowingCrypto.key ? 'bg-green-100' : ''}`}
-            onClick={() => {
-              setSelectedCrypto(key);
-              setShowModal(true);
-            }}
+            onClick={() => handleCryptoClick(key)}
           >
             <div className="flex-shrink-0 flex items-center justify-center w-16 bg-discordAccent text-white text-lg font-medium rounded-l-md">
               <img 
@@ -123,7 +151,7 @@ export function ExchangeRates() {
               <div className="flex-1 px-4 py-2 text-sm truncate">
                 <a href="#" className="text-gray-900 font-medium hover:text-gray-600">{key}/EUR</a>
                 <p className="text-gray-500">
-                  {formatCurrency(parseFloat(value), locale)}
+                  {formatCurrency(parseFloat(value), locale!)}
                   {ratesChange[key] === 'up' && <span className="text-green-500 ml-2">{t('rate_up')}</span>}
                   {ratesChange[key] === 'down' && <span className="text-red-500 ml-2">{t('rate_down')}</span>}
                 </p>
@@ -133,31 +161,13 @@ export function ExchangeRates() {
         ))}
       </div>
       {showModal && selectedCrypto && (
-        <div className="fixed inset-0 flex items-center justify-center text-gray-500 z-50 bg-black bg-opacity-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-96">
-            <h2 className="text-xl font-bold mb-4">{selectedCrypto}/EUR - {t('last_5_rates')}</h2>
-            <table className="w-full text-left">
-              <thead>
-                <tr>
-                  <th className="border-b py-2">{t('rate')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lastRates[selectedCrypto]?.slice(-5).map((rate, index) => (
-                  <tr key={index}>
-                    <td className="border-b py-2">{formatCurrency(rate, locale)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button
-              className="mt-4 bg-discordAccent text-white py-2 px-4 rounded"
-              onClick={() => setShowModal(false)}
-            >
-              {t('close')}
-            </button>
-          </div>
-        </div>
+        <Modal
+          isOpen={showModal}
+          onClose={() => setShowModal(false)}
+          title={`${selectedCrypto}/EUR - ${t('last_5_rates')}`}
+        >
+          <Line data={chartData} options={chartOptions} />
+        </Modal>
       )}
     </div>
   );
