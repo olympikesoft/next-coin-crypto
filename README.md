@@ -36,10 +36,10 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
 
 
-Docker:
+## Run with Docker
 docker build -t my-crypto-rates .
 docker run -p 3000:3000 my-crypto-rates
 
 
-Kubernetes:
+## Run with Kubernetes
 kubectl apply -f deployment.yaml -f service.yaml
