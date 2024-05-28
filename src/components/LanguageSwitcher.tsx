@@ -13,7 +13,14 @@ export function LanguageSwitcher() {
 
   return (
     <div className="flex justify-center mt-4">
-      <p>Render languages</p>
+      <select
+        onChange={changeLanguage}
+        value={locale}
+        className="bg-discordAccent text-white p-2 rounded"
+      >
+        <option value="en">{t('english')}</option>
+        <option value="ar">{t('arabic')}</option>
+      </select>
     </div>
   );
 }

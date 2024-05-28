@@ -1,12 +1,16 @@
-import LanguageSwitcher from '@/components/LanguageSwitcher';
-import Layout from '../../layouts/Layout';
- 
+import dynamic from 'next/dynamic';
+import Layout from '@/layouts/Layout';
 
-export const Homepage: React.FC = () => {
+const ExchangeRates = dynamic(() => import('@/components/ExchangeRates'), { ssr: false });
+const LanguageSwitcher = dynamic(() => import('@/components/LanguageSwitcher'), { ssr: false });
+
+const Homepage: React.FC = () => {
   return (
     <Layout>
       <LanguageSwitcher />
+      <ExchangeRates />
     </Layout>
   );
 };
 
+export default Homepage;
