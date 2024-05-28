@@ -1,0 +1,14 @@
+{
+  "loading": "جار التحميل...",
+  "failed_to_load_data": "فشل في تحميل البيانات.",
+  "crypto_exchange_rates": "أسعار تبادل العملات المشفرة",
+  "most_growing_crypto": "أكثر العملات نمواً",
+  "rate_change": "تغير السعر",
+  "rate_up": "↑",
+  "rate_down": "↓",
+  "last_5_rates": "آخر 5 أسعار",
+  "rate": "السعر",
+  "close": "إغلاق",
+  "english": "الإنجليزية",
+  "arabic": "العربية"
+}
