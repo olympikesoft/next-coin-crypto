@@ -15,28 +15,61 @@ import {
   Legend,
   Filler
 } from 'chart.js';
-import { formatCurrency } from '../utils/formatCurrency';
-import Modal from './Modal';
-import { ExchangeRatesResponse } from '../types/apiTypes';
 
-// Register ChartJS components safely
+// --- REGISTER CHART COMPONENTS ---
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
-// DIRECT FETCHER: Defined here to prevent Import/API 500 errors
+// --- CONFIGURATION ---
+const AFFILIATE_LINK = "https://www.coinbase.com/join"; 
+
+// --- TYPES (Embedded to prevent import errors) ---
+interface ExchangeRatesResponse {
+  data: { currency: string; rates: { [key: string]: string } };
+}
+
+// --- HELPER: FORMAT CURRENCY (Embedded) ---
+const safeFormatCurrency = (amount: number, locale: string) => {
+  try {
+    return new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(amount);
+  } catch (e) {
+    return `€${amount.toFixed(2)}`;
+  }
+};
+
+// --- HELPER: FETCHER (Client-Side Only) ---
+// This bypasses the /api/ route to prevent server-side 500 errors
 const fetchDirectly = async (): Promise<ExchangeRatesResponse> => {
   const response = await fetch('https://api.coinbase.com/v2/exchange-rates?currency=EUR');
   if (!response.ok) throw new Error('Failed to fetch from Coinbase');
   return response.json();
 };
 
-const AFFILIATE_LINK = "https://www.coinbase.com/join/YOUR_CODE";
+// --- SUB-COMPONENT: MODAL (Embedded) ---
+// We embed this to ensure the "title" prop type matches exactly what we pass
+const SimpleModal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-50 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
+        <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+          <div className="text-lg font-bold text-gray-800">{title}</div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div className="p-6">{children}</div>
+      </div>
+    </div>
+  );
+};
 
+// --- MAIN COMPONENT ---
 export function ExchangeRates() {
   const { t, ready } = useTranslation('common');
   const { locale } = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Use the direct fetcher
+  // SWR Hook with direct fetcher
   const { data, error } = useSWR<ExchangeRatesResponse>('coinbase-rates', fetchDirectly, {
     refreshInterval: 6000,
     revalidateOnFocus: false
@@ -49,6 +82,7 @@ export function ExchangeRates() {
   const [selectedCrypto, setSelectedCrypto] = useState<string | null>(null);
   const [lastRates, setLastRates] = useState<{ [key: string]: number[] }>({});
 
+  // Process Data
   useEffect(() => {
     if (data && previousData.current) {
       const changes: { [key: string]: 'up' | 'down' | 'same' } = {};
@@ -99,8 +133,8 @@ export function ExchangeRates() {
     window.open(`${AFFILIATE_LINK}?coin=${key}`, '_blank');
   };
 
+  // Chart Logic
   const chartData = {
-    // FIX: Ensure null-safety for indexing
     labels: Array.from({ length: lastRates[selectedCrypto ?? '']?.length || 0 }, (_, i) => i + 1),
     datasets: [
       {
@@ -117,14 +151,23 @@ export function ExchangeRates() {
 
   const chartOptions = {
     responsive: true,
+    maintainAspectRatio: false,
     plugins: { legend: { display: false } },
     scales: { x: { display: false }, y: { display: true } },
   };
 
-  if (error) return <div className="p-10 text-center text-red-500">Error loading rates. Check console.</div>;
+  // --- RENDER ---
+
+  // 1. Error State
+  if (error) return (
+    <div className="p-10 text-center text-red-500 bg-red-50 rounded-lg border border-red-200">
+      <p className="font-bold">Unable to load exchange rates.</p>
+      <p className="text-sm mt-2">Please check your internet connection.</p>
+    </div>
+  );
   
-  // Render loading state if not ready OR if data is missing
-  if (!ready || !data) {
+  // 2. Loading State
+  if ((!ready && !data) || (!data)) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-8 animate-pulse">
          <div className="h-8 w-48 bg-gray-200 rounded mb-6"></div>
@@ -139,18 +182,17 @@ export function ExchangeRates() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-        <h1 className="text-2xl font-extrabold text-gray-900">{t('crypto_exchange_rates', 'Crypto Rates')}</h1>
+        <h1 className="text-2xl font-extrabold text-gray-900">{t ? t('crypto_exchange_rates', 'Crypto Rates') : 'Crypto Rates'}</h1>
         <input
           type="text"
           placeholder="Search..."
-          className="border p-2 rounded-lg w-full md:w-64"
+          className="border border-gray-300 p-2 rounded-lg w-full md:w-64 focus:ring-2 focus:ring-blue-500 outline-none"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
       </div>
 
-         {/* ---------------- INSERT THIS BLOCK ---------------- */}
-      {/* MOST GROWING CRYPTO BANNER */}
+      {/* Top Performer Banner */}
       {mostGrowingCrypto && !searchTerm && (
         <div className="mb-8 bg-green-50 border border-green-200 rounded-xl p-6 flex flex-col sm:flex-row items-center justify-between shadow-sm">
           <div className="flex items-center mb-4 sm:mb-0">
@@ -173,42 +215,42 @@ export function ExchangeRates() {
              </div>
           </div>
           <button 
-             onClick={(e) => handleTradeClick(e, mostGrowingCrypto.key)}
+             onClick={(e) => handleTradeClick(e, mostGrowingCrypto?.key || '')}
              className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg transition"
           >
             Trade {mostGrowingCrypto.key}
           </button>
         </div>
       )}
-      {/* ---------------- END INSERT BLOCK ---------------- */}
 
-      {/* Grid */}
+      {/* Rates Grid */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {filteredRates.map(([key, value]) => (
           <div
             key={key}
             onClick={() => { setSelectedCrypto(key); setShowModal(true); }}
-            className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 cursor-pointer hover:shadow-md transition"
+            className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 cursor-pointer hover:shadow-md transition group"
           >
             <div className="flex justify-between items-center">
               <div className="flex items-center gap-3">
                 <img 
                   src={`${baseURL}${key.toLowerCase()}.png`} 
                   onError={(e) => { e.currentTarget.src = `${baseURL}generic.png`; }} 
-                  className="h-10 w-10" alt={key} 
+                  className="h-10 w-10 rounded-full bg-gray-50" 
+                  alt={key} 
                 />
-                <span className="font-bold">{key}</span>
+                <span className="font-bold text-gray-800">{key}</span>
               </div>
               <div className="text-right">
-                <div className="font-mono">{formatCurrency(parseFloat(value), locale || 'en-US')}</div>
-                <div className={`text-xs font-bold ${ratesChange[key] === 'up' ? 'text-green-500' : 'text-red-500'}`}>
-                   {ratesChange[key] === 'up' ? '▲' : '▼'}
+                <div className="font-mono font-medium">{safeFormatCurrency(parseFloat(value), locale || 'en-US')}</div>
+                <div className={`text-xs font-bold ${ratesChange[key] === 'up' ? 'text-green-500' : ratesChange[key] === 'down' ? 'text-red-500' : 'text-gray-400'}`}>
+                   {ratesChange[key] === 'up' ? '▲' : ratesChange[key] === 'down' ? '▼' : '-'}
                 </div>
               </div>
             </div>
             <button 
               onClick={(e) => handleTradeClick(e, key)}
-              className="mt-4 w-full text-center text-sm bg-gray-50 hover:bg-discordAccent hover:text-white py-2 rounded transition"
+              className="mt-4 w-full text-center text-sm bg-gray-50 hover:bg-blue-600 hover:text-white py-2 rounded transition font-semibold"
             >
               Trade
             </button>
@@ -216,23 +258,30 @@ export function ExchangeRates() {
         ))}
       </div>
 
-      {/* Modal */}
+      {/* Chart Modal */}
       {showModal && selectedCrypto && (
-        <Modal
+        <SimpleModal
           isOpen={showModal}
           onClose={() => setShowModal(false)}
-          title={`${selectedCrypto} / EUR`}
+          title={
+            <div className="flex items-center gap-2">
+               <img src={`${baseURL}${selectedCrypto.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-6 w-6"/>
+               <span>{selectedCrypto} / EUR</span>
+            </div>
+          }
         >
-          <div className="p-2">
-             <div className="h-64 w-full">
-               <Line data={chartData} options={chartOptions} />
-             </div>
-             <div className="mt-4 flex gap-2">
-               <button onClick={(e) => handleTradeClick(e, selectedCrypto)} className="flex-1 bg-green-600 text-white py-2 rounded-lg">Buy Now</button>
-               <button onClick={() => setShowModal(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">Close</button>
-             </div>
+          <div className="h-64 w-full bg-white">
+             <Line data={chartData} options={chartOptions} />
           </div>
-        </Modal>
+          <div className="mt-6 flex gap-3">
+            <button onClick={(e) => handleTradeClick(e, selectedCrypto)} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg shadow transition">
+              Buy {selectedCrypto}
+            </button>
+            <button onClick={() => setShowModal(false)} className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3 rounded-lg transition">
+              Close
+            </button>
+          </div>
+        </SimpleModal>
       )}
     </div>
   );
