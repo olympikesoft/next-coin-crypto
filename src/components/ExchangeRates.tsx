@@ -17,7 +17,7 @@ import {
   ScriptableContext
 } from 'chart.js';
 
-// --- DYNAMIC CHART IMPORT ---
+// --- DYNAMIC IMPORT ---
 const Line = dynamic(() => import('react-chartjs-2').then((mod) => mod.Line), {
   ssr: false,
   loading: () => <div className="h-64 w-full bg-gray-800 animate-pulse rounded-md" />
@@ -37,13 +37,11 @@ const COIN_NAMES: { [key: string]: string } = {
   LTC: 'Litecoin', BCH: 'Bitcoin Cash', UNI: 'Uniswap', ATOM: 'Cosmos', XMR: 'Monero'
 };
 
-// --- TYPES ---
 interface ExchangeRatesResponse {
   data: { currency: string; rates: { [key: string]: string }; };
 }
 type SortOption = 'rank' | 'name' | 'priceHigh' | 'priceLow';
 
-// --- HELPER: FORMAT CURRENCY ---
 const safeFormatCurrency = (amount: number, locale: string = 'en-US') => {
   try {
     return new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(amount);
@@ -58,7 +56,7 @@ const fetchDirectly = async (): Promise<ExchangeRatesResponse> => {
   return response.json();
 };
 
-// --- MODAL COMPONENT ---
+// --- MODAL ---
 const DarkModal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode }) => {
   if (!isOpen) return null;
   return (
@@ -87,15 +85,19 @@ export function ExchangeRates() {
   // STATE
   const [searchTerm, setSearchTerm] = useState('');
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [holdings, setHoldings] = useState<{ [key: string]: number }>({}); // Portfolio State
-  const [activeTab, setActiveTab] = useState<'all' | 'favorites' | 'portfolio'>('all');
+  const [holdings, setHoldings] = useState<{ [key: string]: number }>({});
+  const [activeTab, setActiveTab] = useState<'all' | 'favorites' | 'portfolio' | 'compare'>('all');
   const [sortBy, setSortBy] = useState<SortOption>('rank');
   
-  // Modal & Calc
+  // Compare State
+  const [compareA, setCompareA] = useState<string>('BTC');
+  const [compareB, setCompareB] = useState<string>('ETH');
+
+  // Modal State
   const [showModal, setShowModal] = useState(false);
   const [selectedCrypto, setSelectedCrypto] = useState<string | null>(null);
   const [calcAmount, setCalcAmount] = useState<string>('100');
-  const [holdingInput, setHoldingInput] = useState<string>(''); // For the input in modal
+  const [holdingInput, setHoldingInput] = useState<string>('');
 
   const { data, error } = useSWR<ExchangeRatesResponse>('coinbase-rates', fetchDirectly, {
     refreshInterval: 6000,
@@ -106,9 +108,8 @@ export function ExchangeRates() {
   const [ratesChange, setRatesChange] = useState<{ [key: string]: 'up' | 'down' | 'same' }>({});
   const [mostGrowingCrypto, setMostGrowingCrypto] = useState<{ key: string, change: number, percent: number } | null>(null);
   const [lastRates, setLastRates] = useState<{ [key: string]: number[] }>({});
-  const [marketHealth, setMarketHealth] = useState({ up: 0, down: 0, total: 0 }); // Bull/Bear Meter
+  const [marketHealth, setMarketHealth] = useState({ up: 0, down: 0, total: 0 });
 
-  // --- LOAD LOCAL STORAGE ---
   useEffect(() => {
     const savedFavs = localStorage.getItem('cryptoFavorites');
     const savedHoldings = localStorage.getItem('cryptoHoldings');
@@ -116,18 +117,12 @@ export function ExchangeRates() {
     if (savedHoldings) setHoldings(JSON.parse(savedHoldings));
   }, []);
 
-  // --- SAVE HOLDINGS ---
   const updateHolding = (amount: string) => {
     if (!selectedCrypto) return;
     const val = parseFloat(amount);
     const newHoldings = { ...holdings };
-    
-    if (isNaN(val) || val <= 0) {
-      delete newHoldings[selectedCrypto];
-    } else {
-      newHoldings[selectedCrypto] = val;
-    }
-    
+    if (isNaN(val) || val <= 0) delete newHoldings[selectedCrypto];
+    else newHoldings[selectedCrypto] = val;
     setHoldings(newHoldings);
     localStorage.setItem('cryptoHoldings', JSON.stringify(newHoldings));
     setHoldingInput(amount);
@@ -140,7 +135,6 @@ export function ExchangeRates() {
     localStorage.setItem('cryptoFavorites', JSON.stringify(newFavs));
   };
 
-  // --- DATA PROCESSING EFFECT ---
   useEffect(() => {
     if (data && previousData.current) {
       const changes: { [key: string]: 'up' | 'down' | 'same' } = {};
@@ -168,7 +162,7 @@ export function ExchangeRates() {
         setLastRates((prev) => {
           const history = prev[key] ? [...prev[key]] : [];
           history.push(currentRate);
-          if (history.length > 20) history.shift();
+          if (history.length > 30) history.shift(); // Keep more history for compare chart
           return { ...prev, [key]: history };
         });
       });
@@ -180,7 +174,6 @@ export function ExchangeRates() {
     if (data) previousData.current = data;
   }, [data]);
 
-  // --- CALCULATE TOTAL PORTFOLIO VALUE ---
   const totalPortfolioValue = useMemo(() => {
     if (!data) return 0;
     return Object.entries(holdings).reduce((total, [key, amount]) => {
@@ -189,17 +182,13 @@ export function ExchangeRates() {
     }, 0);
   }, [holdings, data]);
 
-  // --- FILTER & SORT LOGIC ---
   const filteredRates = useMemo(() => {
     if (!data) return [];
-    
     let entries = Object.entries(data.data.rates);
     
-    // 1. Filter Tab
     if (activeTab === 'favorites') entries = entries.filter(([key]) => favorites.includes(key));
     if (activeTab === 'portfolio') entries = entries.filter(([key]) => holdings[key] && holdings[key] > 0);
 
-    // 2. Search
     if (searchTerm) {
       entries = entries.filter(([key]) => 
         key.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -207,16 +196,14 @@ export function ExchangeRates() {
       );
     }
 
-    // 3. Sorting
     entries.sort((a, b) => {
       const rateA = parseFloat(a[1]);
       const rateB = parseFloat(b[1]);
-      
       switch (sortBy) {
         case 'priceHigh': return rateB - rateA;
         case 'priceLow': return rateA - rateB;
         case 'name': return a[0].localeCompare(b[0]);
-        default: return 0; // Rank/Default order
+        default: return 0;
       }
     });
 
@@ -230,25 +217,29 @@ export function ExchangeRates() {
 
   const baseURL = '/icons/';
 
-  // --- CHART OPTIONS ---
-  const chartData = {
-    labels: Array.from({ length: lastRates[selectedCrypto ?? '']?.length || 0 }, (_, i) => i + 1),
-    datasets: [{
-      label: `${selectedCrypto}/EUR`,
-      data: lastRates[selectedCrypto ?? ''] || [],
-      fill: true,
-      backgroundColor: (context: ScriptableContext<'line'>) => {
-        const ctx = context.chart.ctx;
-        const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-        gradient.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
-        gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
-        return gradient;
-      },
-      borderColor: '#10B981',
-      borderWidth: 2,
-      tension: 0.4,
-      pointRadius: 0,
-    }],
+  // --- CHART LOGIC ---
+  const getChartData = (keys: string[]) => {
+     return {
+        labels: Array.from({ length: lastRates[keys[0]]?.length || 0 }, (_, i) => i + 1),
+        datasets: keys.map((key, index) => {
+           // Normalize data to percentage change from start of session
+           const rawData = lastRates[key] || [];
+           const startValue = rawData[0] || 1;
+           const normalizedData = rawData.map(val => ((val - startValue) / startValue) * 100);
+
+           const color = index === 0 ? '#10B981' : '#3B82F6'; // Green vs Blue
+
+           return {
+             label: key,
+             data: normalizedData,
+             borderColor: color,
+             backgroundColor: color,
+             borderWidth: 2,
+             tension: 0.4,
+             pointRadius: 0,
+           };
+        })
+     };
   };
 
   const chartOptions = {
@@ -258,11 +249,9 @@ export function ExchangeRates() {
     scales: { x: { display: false }, y: { display: true, grid: { color: '#374151' }, ticks: { color: '#9CA3AF' } } },
   };
 
-  // --- LOADING / ERROR ---
   if (error) return <div className="min-h-screen bg-black text-white flex items-center justify-center">Error loading data.</div>;
   if ((!ready && !data) || (!data)) return <div className="min-h-screen bg-black text-white p-10">Loading...</div>;
 
-  // --- OPEN MODAL HANDLER ---
   const openModal = (key: string) => {
     setSelectedCrypto(key);
     setHoldingInput(holdings[key] ? holdings[key].toString() : '');
@@ -272,18 +261,21 @@ export function ExchangeRates() {
   const selectedRate = selectedCrypto ? parseFloat(data.data.rates[selectedCrypto]) : 0;
   const cryptoAmount = selectedRate > 0 && calcAmount ? (parseFloat(calcAmount) / selectedRate).toFixed(6) : '0';
 
+  // Compare Logic
+  const rateA = parseFloat(data.data.rates[compareA] || '0');
+  const rateB = parseFloat(data.data.rates[compareB] || '0');
+  const crossRate = rateB > 0 ? (rateA / rateB).toFixed(6) : '0';
+
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-green-500 selection:text-black pb-20">
       
-      {/* 1. HEADER & TOTAL BALANCE */}
+      {/* HEADER */}
       <div className="sticky top-0 z-40 backdrop-blur-md bg-black/80 border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-gradient-to-tr from-green-400 to-blue-500 rounded-lg shadow-lg"></div>
             <h1 className="text-xl font-bold tracking-tight hidden sm:block">Crypto<span className="text-green-400">Market</span></h1>
           </div>
-          
-          {/* TOTAL BALANCE DISPLAY */}
           <div className="flex flex-col items-end">
             <span className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Total Portfolio</span>
             <div className={`font-mono font-bold text-xl ${totalPortfolioValue > 0 ? 'text-green-400' : 'text-gray-500'}`}>
@@ -295,71 +287,136 @@ export function ExchangeRates() {
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
-        {/* 2. MARKET SENTIMENT BAR */}
+        {/* MARKET HEALTH BAR */}
         <div className="mb-8 bg-gray-900 rounded-full h-2 overflow-hidden flex w-full">
            <div style={{ width: `${(marketHealth.up / marketHealth.total) * 100}%` }} className="bg-green-500 h-full transition-all duration-1000"></div>
            <div style={{ width: `${(marketHealth.down / marketHealth.total) * 100}%` }} className="bg-red-500 h-full transition-all duration-1000"></div>
         </div>
         
-        {/* 3. CONTROLS: TABS & SORT & SEARCH */}
-        <div className="flex flex-col md:flex-row gap-4 mb-6 justify-between items-end md:items-center border-b border-gray-800 pb-4">
-          
-          {/* Tabs */}
-          <div className="flex bg-gray-900 p-1 rounded-lg">
-            {(['all', 'favorites', 'portfolio'] as const).map((tab) => (
+        {/* TABS & CONTROLS */}
+        <div className="flex flex-col lg:flex-row gap-4 mb-6 justify-between items-end lg:items-center border-b border-gray-800 pb-4">
+          <div className="flex bg-gray-900 p-1 rounded-lg overflow-x-auto">
+            {(['all', 'favorites', 'portfolio', 'compare'] as const).map((tab) => (
               <button 
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 text-sm font-bold rounded-md transition-colors capitalize ${activeTab === tab ? 'bg-gray-800 text-white shadow' : 'text-gray-500 hover:text-gray-300'}`}
+                className={`px-4 py-2 text-sm font-bold rounded-md transition-colors capitalize whitespace-nowrap ${activeTab === tab ? 'bg-gray-800 text-white shadow ring-1 ring-gray-700' : 'text-gray-500 hover:text-gray-300'}`}
               >
-                {tab}
+                {tab === 'compare' ? '⚔️ Compare' : tab}
               </button>
             ))}
           </div>
 
-          <div className="flex gap-2 w-full md:w-auto">
-             {/* Sort Dropdown */}
-             <select 
-               className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg p-2.5 outline-none focus:border-green-500"
-               value={sortBy}
-               onChange={(e) => setSortBy(e.target.value as SortOption)}
-             >
-               <option value="rank">Default Rank</option>
-               <option value="priceHigh">Price: High to Low</option>
-               <option value="priceLow">Price: Low to High</option>
-               <option value="name">Name: A-Z</option>
-             </select>
-
-             {/* Search */}
-             <input
-              type="text"
-              placeholder={safeT('search_crypto', 'Search...')}
-              className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg p-2.5 w-full md:w-48 outline-none focus:border-green-500"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
+          {activeTab !== 'compare' && (
+             <div className="flex gap-2 w-full lg:w-auto">
+               <select 
+                 className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg p-2.5 outline-none focus:border-green-500"
+                 value={sortBy}
+                 onChange={(e) => setSortBy(e.target.value as SortOption)}
+               >
+                 <option value="rank">Rank</option>
+                 <option value="priceHigh">Price: High</option>
+                 <option value="priceLow">Price: Low</option>
+                 <option value="name">A-Z</option>
+               </select>
+               <input
+                type="text"
+                placeholder={safeT('search_crypto', 'Search...')}
+                className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg p-2.5 w-full md:w-48 outline-none focus:border-green-500"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          )}
         </div>
 
-        {/* 4. MAIN GRID */}
-        {filteredRates.length === 0 ? (
-          <div className="text-center py-20 text-gray-500">No coins found.</div>
+        {/* === COMPARE VIEW === */}
+        {activeTab === 'compare' ? (
+          <div className="animate-in fade-in zoom-in duration-300">
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 items-center">
+                {/* SELECTOR A */}
+                <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl relative">
+                   <div className="absolute -top-3 left-6 px-2 bg-black text-xs font-bold text-green-500 uppercase tracking-widest">Coin A</div>
+                   <select 
+                      value={compareA} 
+                      onChange={(e) => setCompareA(e.target.value)}
+                      className="w-full bg-black border border-gray-700 rounded-xl p-4 text-xl font-bold text-white outline-none focus:border-green-500 mb-4"
+                   >
+                      {Object.keys(data.data.rates).sort().map(k => <option key={k} value={k}>{k}</option>)}
+                   </select>
+                   <div className="flex items-center gap-3">
+                      <img src={`${baseURL}${compareA.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-12 w-12 rounded-full"/>
+                      <div>
+                         <div className="text-2xl font-mono font-bold">{safeFormatCurrency(rateA, locale!)}</div>
+                         <div className="text-xs text-gray-500">{COIN_NAMES[compareA] || compareA}</div>
+                      </div>
+                   </div>
+                </div>
+
+                {/* VS BADGE (Mobile: Center / Desktop: Center) */}
+                <div className="hidden md:flex justify-center absolute left-1/2 transform -translate-x-1/2 z-10">
+                   <div className="bg-black border-4 border-gray-800 rounded-full w-16 h-16 flex items-center justify-center font-black text-xl italic text-gray-600 shadow-xl">VS</div>
+                </div>
+
+                {/* SELECTOR B */}
+                <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl relative">
+                   <div className="absolute -top-3 left-6 px-2 bg-black text-xs font-bold text-blue-500 uppercase tracking-widest">Coin B</div>
+                   <select 
+                      value={compareB} 
+                      onChange={(e) => setCompareB(e.target.value)}
+                      className="w-full bg-black border border-gray-700 rounded-xl p-4 text-xl font-bold text-white outline-none focus:border-blue-500 mb-4"
+                   >
+                      {Object.keys(data.data.rates).sort().map(k => <option key={k} value={k}>{k}</option>)}
+                   </select>
+                   <div className="flex items-center gap-3">
+                      <img src={`${baseURL}${compareB.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-12 w-12 rounded-full"/>
+                      <div>
+                         <div className="text-2xl font-mono font-bold">{safeFormatCurrency(rateB, locale!)}</div>
+                         <div className="text-xs text-gray-500">{COIN_NAMES[compareB] || compareB}</div>
+                      </div>
+                   </div>
+                </div>
+             </div>
+
+             {/* CROSS RATE CARD */}
+             <div className="bg-gradient-to-r from-gray-900 to-gray-800 border border-gray-700 rounded-2xl p-6 mb-8 text-center">
+                <p className="text-gray-400 text-sm uppercase tracking-wide mb-2">Exchange Ratio</p>
+                <div className="text-3xl sm:text-4xl font-black text-white">
+                   1 <span className="text-green-500">{compareA}</span> = {crossRate} <span className="text-blue-500">{compareB}</span>
+                </div>
+             </div>
+
+             {/* COMPARE CHART */}
+             <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+                <div className="flex justify-between items-center mb-6">
+                   <h3 className="font-bold text-gray-300">Performance Comparison (Session)</h3>
+                   <div className="flex gap-4 text-xs font-bold">
+                      <span className="text-green-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> {compareA}</span>
+                      <span className="text-blue-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span> {compareB}</span>
+                   </div>
+                </div>
+                <div className="h-64 w-full">
+                   <Line data={getChartData([compareA, compareB])} options={chartOptions} />
+                </div>
+                <p className="text-center text-xs text-gray-600 mt-4 italic">Chart normalizes growth to 0% at start of session to compare trends.</p>
+             </div>
+          </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredRates.map(([key, value]) => (
+          /* === STANDARD GRID VIEW === */
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {filteredRates.length === 0 ? <div className="col-span-full text-center py-20 text-gray-500">No coins found.</div> : 
+             filteredRates.map(([key, value]) => (
               <div
                 key={key}
                 onClick={() => openModal(key)}
                 className={`group bg-gray-900 border rounded-xl p-4 cursor-pointer transition-all duration-200 hover:shadow-xl hover:bg-gray-800 relative ${holdings[key] ? 'border-green-500/30 bg-green-900/5' : 'border-gray-800 hover:border-gray-600'}`}
               >
-                {/* Favorite Star */}
                 <button 
                   onClick={(e) => toggleFavorite(e, key)}
                   className={`absolute top-3 right-3 p-1.5 rounded-full z-20 ${favorites.includes(key) ? 'text-yellow-400' : 'text-gray-700 hover:text-white'}`}
                 >
                   <svg className="w-5 h-5" fill={favorites.includes(key) ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
                 </button>
-
                 <div className="flex items-center gap-3 mb-4">
                   <img src={`${baseURL}${key.toLowerCase()}.png`} onError={(e) => { e.currentTarget.src = `${baseURL}generic.png`; }} className="h-10 w-10 rounded-full bg-gray-800 border border-gray-700" alt={key} />
                   <div className="overflow-hidden">
@@ -370,20 +427,17 @@ export function ExchangeRates() {
                     </div>
                   </div>
                 </div>
-
                 <div className="flex justify-between items-end">
                   <div>
                     <div className="text-lg font-mono font-medium text-gray-200">
                       {safeFormatCurrency(parseFloat(value), locale!)}
                     </div>
-                    {/* Show Portfolio Value for this Coin */}
                     {holdings[key] && (
                        <div className="text-xs text-green-400 font-mono mt-1">
-                         Your val: {safeFormatCurrency(parseFloat(value) * holdings[key], locale!)}
+                         Value: {safeFormatCurrency(parseFloat(value) * holdings[key], locale!)}
                        </div>
                     )}
                   </div>
-                  
                   <div className={`text-xs font-bold flex items-center px-1.5 py-0.5 rounded ${ratesChange[key] === 'up' ? 'text-green-400' : ratesChange[key] === 'down' ? 'text-red-400' : 'text-gray-500'}`}>
                      {ratesChange[key] === 'up' && '▲'}
                      {ratesChange[key] === 'down' && '▼'}
@@ -395,7 +449,7 @@ export function ExchangeRates() {
         )}
       </div>
 
-      {/* 5. ENHANCED MODAL */}
+      {/* MODAL */}
       {showModal && selectedCrypto && (
         <DarkModal
           isOpen={showModal}
@@ -410,13 +464,11 @@ export function ExchangeRates() {
             </div>
           }
         >
-          {/* CHART */}
           <div className="h-64 w-full bg-gray-900 rounded-lg p-2 border border-gray-800 mb-6 relative">
-             <Line data={chartData} options={chartOptions} />
+             <Line data={getChartData([selectedCrypto])} options={chartOptions} />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-             {/* LEFT: CALCULATOR */}
              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
                 <h4 className="text-xs font-bold text-gray-400 uppercase mb-3">Instant Converter</h4>
                 <div className="space-y-3">
@@ -432,7 +484,6 @@ export function ExchangeRates() {
                 </div>
              </div>
 
-             {/* RIGHT: PORTFOLIO MANAGER */}
              <div className="bg-green-900/10 rounded-xl p-4 border border-green-500/20">
                 <h4 className="text-xs font-bold text-green-400 uppercase mb-3">Your Portfolio</h4>
                 <p className="text-xs text-gray-400 mb-2">How much {selectedCrypto} do you own?</p>
