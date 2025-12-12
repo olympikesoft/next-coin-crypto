@@ -92,11 +92,12 @@ export function ExchangeRates() {
   };
 
   const chartData = {
-    labels: Array.from({ length: lastRates[selectedCrypto]?.length }, (_, i) => i + 1),
+    labels: Array.from({ length: lastRates[selectedCrypto ?? '']?.length || 0 }, (_, i) => i + 1),
     datasets: [
       {
         label: `${selectedCrypto}/EUR`,
-        data: lastRates[selectedCrypto],
+        // Same fix here for the data array
+        data: lastRates[selectedCrypto ?? ''] || [],
         fill: false,
         backgroundColor: 'rgba(75,192,192,0.4)',
         borderColor: 'rgba(75,192,192,1)',
