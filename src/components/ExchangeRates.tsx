@@ -162,7 +162,7 @@ export function ExchangeRates() {
         setLastRates((prev) => {
           const history = prev[key] ? [...prev[key]] : [];
           history.push(currentRate);
-          if (history.length > 30) history.shift(); // Keep more history for compare chart
+          if (history.length > 30) history.shift();
           return { ...prev, [key]: history };
         });
       });
@@ -222,7 +222,6 @@ export function ExchangeRates() {
      return {
         labels: Array.from({ length: lastRates[keys[0]]?.length || 0 }, (_, i) => i + 1),
         datasets: keys.map((key, index) => {
-           // Normalize data to percentage change from start of session
            const rawData = lastRates[key] || [];
            const startValue = rawData[0] || 1;
            const normalizedData = rawData.map(val => ((val - startValue) / startValue) * 100);
@@ -240,6 +239,27 @@ export function ExchangeRates() {
            };
         })
      };
+  };
+
+  // Fixed: Correctly using ScriptableContext to avoid "unused var" error
+  const modalChartData = {
+    labels: Array.from({ length: lastRates[selectedCrypto ?? '']?.length || 0 }, (_, i) => i + 1),
+    datasets: [{
+      label: `${selectedCrypto}/EUR`,
+      data: lastRates[selectedCrypto ?? ''] || [],
+      fill: true,
+      backgroundColor: (context: ScriptableContext<'line'>) => {
+        const ctx = context.chart.ctx;
+        const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
+        gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+        return gradient;
+      },
+      borderColor: '#10B981',
+      borderWidth: 2,
+      tension: 0.4,
+      pointRadius: 0,
+    }],
   };
 
   const chartOptions = {
@@ -292,6 +312,27 @@ export function ExchangeRates() {
            <div style={{ width: `${(marketHealth.up / marketHealth.total) * 100}%` }} className="bg-green-500 h-full transition-all duration-1000"></div>
            <div style={{ width: `${(marketHealth.down / marketHealth.total) * 100}%` }} className="bg-red-500 h-full transition-all duration-1000"></div>
         </div>
+
+        {/* TOP PERFORMER BANNER (Re-added to fix unused variable error) */}
+        {mostGrowingCrypto && !searchTerm && activeTab === 'all' && (
+          <div className="mb-8 relative overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 group cursor-pointer" onClick={() => { setSelectedCrypto(mostGrowingCrypto?.key || null); setShowModal(true); }}>
+             <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-green-500 opacity-10 blur-[80px] rounded-full"></div>
+             <div className="relative z-10 p-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                   <img src={`${baseURL}${mostGrowingCrypto.key.toLowerCase()}.png`} onError={(e) => { e.currentTarget.src = `${baseURL}generic.png`; }} className="h-14 w-14 rounded-full bg-gray-800 border-2 border-green-500/30" alt={mostGrowingCrypto.key} />
+                   <div>
+                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-900/50 text-green-300 border border-green-800 uppercase tracking-wide">Top Gainer 24h</span>
+                     <h2 className="text-2xl font-bold text-white mt-1">{COIN_NAMES[mostGrowingCrypto.key] || mostGrowingCrypto.key}</h2>
+                     <p className="text-green-400 font-mono font-bold">+{mostGrowingCrypto.percent.toFixed(2)}%</p>
+                   </div>
+                </div>
+                <div className="hidden sm:block">
+                  <span className="text-gray-400 text-sm mr-2">Market Price</span>
+                  <span className="text-xl font-mono font-bold">{safeFormatCurrency(parseFloat(data.data.rates[mostGrowingCrypto.key]), locale!)}</span>
+                </div>
+             </div>
+          </div>
+        )}
         
         {/* TABS & CONTROLS */}
         <div className="flex flex-col lg:flex-row gap-4 mb-6 justify-between items-end lg:items-center border-b border-gray-800 pb-4">
@@ -345,7 +386,7 @@ export function ExchangeRates() {
                       {Object.keys(data.data.rates).sort().map(k => <option key={k} value={k}>{k}</option>)}
                    </select>
                    <div className="flex items-center gap-3">
-                      <img src={`${baseURL}${compareA.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-12 w-12 rounded-full"/>
+                      <img src={`${baseURL}${compareA.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-12 w-12 rounded-full" alt={compareA}/>
                       <div>
                          <div className="text-2xl font-mono font-bold">{safeFormatCurrency(rateA, locale!)}</div>
                          <div className="text-xs text-gray-500">{COIN_NAMES[compareA] || compareA}</div>
@@ -369,7 +410,7 @@ export function ExchangeRates() {
                       {Object.keys(data.data.rates).sort().map(k => <option key={k} value={k}>{k}</option>)}
                    </select>
                    <div className="flex items-center gap-3">
-                      <img src={`${baseURL}${compareB.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-12 w-12 rounded-full"/>
+                      <img src={`${baseURL}${compareB.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-12 w-12 rounded-full" alt={compareB}/>
                       <div>
                          <div className="text-2xl font-mono font-bold">{safeFormatCurrency(rateB, locale!)}</div>
                          <div className="text-xs text-gray-500">{COIN_NAMES[compareB] || compareB}</div>
@@ -465,7 +506,7 @@ export function ExchangeRates() {
           }
         >
           <div className="h-64 w-full bg-gray-900 rounded-lg p-2 border border-gray-800 mb-6 relative">
-             <Line data={getChartData([selectedCrypto])} options={chartOptions} />
+             <Line data={modalChartData} options={chartOptions} />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
