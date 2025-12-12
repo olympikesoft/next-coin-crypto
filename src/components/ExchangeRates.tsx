@@ -149,6 +149,39 @@ export function ExchangeRates() {
         />
       </div>
 
+         {/* ---------------- INSERT THIS BLOCK ---------------- */}
+      {/* MOST GROWING CRYPTO BANNER */}
+      {mostGrowingCrypto && !searchTerm && (
+        <div className="mb-8 bg-green-50 border border-green-200 rounded-xl p-6 flex flex-col sm:flex-row items-center justify-between shadow-sm">
+          <div className="flex items-center mb-4 sm:mb-0">
+             <div className="bg-white p-2 rounded-full shadow-sm mr-4">
+               <img 
+                  src={`${baseURL}${mostGrowingCrypto.key.toLowerCase()}.png`} 
+                  onError={(e) => { e.currentTarget.src = `${baseURL}generic.png`; }} 
+                  className="h-12 w-12" 
+                  alt={mostGrowingCrypto.key} 
+                />
+             </div>
+             <div>
+               <p className="text-xs font-bold text-green-800 uppercase tracking-wider">Top Performer (24h)</p>
+               <div className="flex items-baseline gap-2">
+                 <h2 className="text-2xl font-bold text-gray-900">{mostGrowingCrypto.key}</h2>
+                 <span className="text-green-600 font-bold text-lg">
+                   +{mostGrowingCrypto.percent.toFixed(2)}%
+                 </span>
+               </div>
+             </div>
+          </div>
+          <button 
+             onClick={(e) => handleTradeClick(e, mostGrowingCrypto.key)}
+             className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg transition"
+          >
+            Trade {mostGrowingCrypto.key}
+          </button>
+        </div>
+      )}
+      {/* ---------------- END INSERT BLOCK ---------------- */}
+
       {/* Grid */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
         {filteredRates.map(([key, value]) => (
