@@ -13,7 +13,8 @@ import {
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
+  ScriptableContext
 } from 'chart.js';
 
 // --- DYNAMIC IMPORT FOR CHART (Prevents 500 Error) ---
@@ -30,6 +31,14 @@ if (typeof window !== 'undefined') {
 // --- CONFIG ---
 const AFFILIATE_LINK = "https://www.coinbase.com/join"; 
 
+// --- TYPES ---
+interface ExchangeRatesResponse {
+  data: { 
+    currency: string; 
+    rates: { [key: string]: string };
+  };
+}
+
 // --- HELPER: FORMAT CURRENCY ---
 const safeFormatCurrency = (amount: number, locale: string = 'en-US') => {
   try {
@@ -40,7 +49,7 @@ const safeFormatCurrency = (amount: number, locale: string = 'en-US') => {
 };
 
 // --- HELPER: FETCHER ---
-const fetchDirectly = async () => {
+const fetchDirectly = async (): Promise<ExchangeRatesResponse> => {
   const response = await fetch('https://api.coinbase.com/v2/exchange-rates?currency=EUR');
   if (!response.ok) throw new Error('Failed to fetch');
   return response.json();
@@ -71,12 +80,14 @@ export function ExchangeRates() {
   const { locale } = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
 
-  const { data, error } = useSWR('coinbase-rates', fetchDirectly, {
+  const { data, error } = useSWR<ExchangeRatesResponse>('coinbase-rates', fetchDirectly, {
     refreshInterval: 6000,
     revalidateOnFocus: false
   });
 
-  const previousData = useRef<any>(null);
+  // FIX 1: Typed useRef explicitly to avoid "Unexpected any"
+  const previousData = useRef<ExchangeRatesResponse | null>(null);
+  
   const [ratesChange, setRatesChange] = useState<{ [key: string]: 'up' | 'down' | 'same' }>({});
   const [mostGrowingCrypto, setMostGrowingCrypto] = useState<{ key: string, change: number, percent: number } | null>(null);
   const [showModal, setShowModal] = useState(false);
@@ -90,7 +101,9 @@ export function ExchangeRates() {
       let mostGrowing = null;
 
       Object.keys(data.data.rates).forEach((key) => {
-        const previousRate = parseFloat(previousData.current.data.rates[key] || '0');
+        // Ensure strictly string access to avoid TS issues
+        const prevRates = previousData.current?.data.rates || {};
+        const previousRate = parseFloat(prevRates[key] || '0');
         const currentRate = parseFloat(data.data.rates[key]);
         const growth = currentRate - previousRate;
         const percentChange = previousRate !== 0 ? (growth / previousRate) * 100 : 0;
@@ -141,7 +154,8 @@ export function ExchangeRates() {
         label: `${selectedCrypto}/EUR`,
         data: lastRates[selectedCrypto ?? ''] || [],
         fill: true,
-        backgroundColor: (context: any) => {
+        // FIX 2: Typed context correctly to avoid "Unexpected any"
+        backgroundColor: (context: ScriptableContext<'line'>) => {
           const ctx = context.chart.ctx;
           const gradient = ctx.createLinearGradient(0, 0, 0, 300);
           gradient.addColorStop(0, 'rgba(16, 185, 129, 0.4)'); // Green
@@ -171,10 +185,23 @@ export function ExchangeRates() {
     },
   };
 
+  // FIX 3: Handled 'error' state to satisfy "assigned but never used"
+  if (error) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center">
+        <div className="text-center p-6 bg-gray-900 rounded-xl border border-red-900">
+           <h2 className="text-xl font-bold text-red-500 mb-2">Connection Error</h2>
+           <p className="text-gray-400">Failed to load live exchange rates.</p>
+           <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded text-sm">Retry</button>
+        </div>
+      </div>
+    );
+  }
+
   // LOADING SKELETON
   if ((!ready && !data) || (!data)) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className="min-h-screen bg-black max-w-7xl mx-auto px-4 py-8">
          <div className="h-12 w-64 bg-gray-800 rounded mb-8 animate-pulse"></div>
          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[...Array(9)].map((_, i) => <div key={i} className="h-32 bg-gray-800 rounded-xl animate-pulse"></div>)}
@@ -312,7 +339,13 @@ export function ExchangeRates() {
           onClose={() => setShowModal(false)}
           title={
             <div className="flex items-center gap-3">
-               <img src={`${baseURL}${selectedCrypto.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-8 w-8"/>
+               {/* FIX 4: Added Alt Tag */}
+               <img 
+                 src={`${baseURL}${selectedCrypto.toLowerCase()}.png`} 
+                 onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} 
+                 className="h-8 w-8"
+                 alt={`${selectedCrypto} icon`}
+                />
                <span>{selectedCrypto} <span className="text-gray-500 text-base font-normal">/ EUR</span></span>
             </div>
           }
