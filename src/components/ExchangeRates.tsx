@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import useSWR from 'swr';
 import { useTranslation } from 'next-i18next';
 import { useRouter } from 'next/router';
-import { Line } from 'react-chartjs-2';
+import dynamic from 'next/dynamic'; // 1. Import Dynamic
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -16,19 +16,28 @@ import {
   Filler
 } from 'chart.js';
 
-// --- REGISTER CHART COMPONENTS ---
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
+// 2. DYNAMIC IMPORT FOR CHART
+// This prevents "Window is not defined" 500 Errors
+const Line = dynamic(() => import('react-chartjs-2').then((mod) => mod.Line), {
+  ssr: false,
+  loading: () => <div className="h-64 w-full bg-gray-50 animate-pulse rounded-md" />
+});
+
+// 3. REGISTER CHART (Only on Client)
+if (typeof window !== 'undefined') {
+  ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
+}
 
 // --- CONFIGURATION ---
 const AFFILIATE_LINK = "https://www.coinbase.com/join"; 
 
-// --- TYPES (Embedded to prevent import errors) ---
+// --- TYPES ---
 interface ExchangeRatesResponse {
   data: { currency: string; rates: { [key: string]: string } };
 }
 
-// --- HELPER: FORMAT CURRENCY (Embedded) ---
-const safeFormatCurrency = (amount: number, locale: string) => {
+// --- HELPER: FORMAT CURRENCY ---
+const safeFormatCurrency = (amount: number, locale: string = 'en-US') => {
   try {
     return new Intl.NumberFormat(locale, { style: 'currency', currency: 'EUR' }).format(amount);
   } catch (e) {
@@ -36,16 +45,14 @@ const safeFormatCurrency = (amount: number, locale: string) => {
   }
 };
 
-// --- HELPER: FETCHER (Client-Side Only) ---
-// This bypasses the /api/ route to prevent server-side 500 errors
+// --- HELPER: FETCHER ---
 const fetchDirectly = async (): Promise<ExchangeRatesResponse> => {
   const response = await fetch('https://api.coinbase.com/v2/exchange-rates?currency=EUR');
   if (!response.ok) throw new Error('Failed to fetch from Coinbase');
   return response.json();
 };
 
-// --- SUB-COMPONENT: MODAL (Embedded) ---
-// We embed this to ensure the "title" prop type matches exactly what we pass
+// --- SUB-COMPONENT: MODAL ---
 const SimpleModal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode }) => {
   if (!isOpen) return null;
   return (
@@ -65,11 +72,13 @@ const SimpleModal = ({ isOpen, onClose, title, children }: { isOpen: boolean; on
 
 // --- MAIN COMPONENT ---
 export function ExchangeRates() {
+  // Safe translation fallback
   const { t, ready } = useTranslation('common');
+  const safeT = t || ((key: string, fallback?: string) => fallback || key);
+  
   const { locale } = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
 
-  // SWR Hook with direct fetcher
   const { data, error } = useSWR<ExchangeRatesResponse>('coinbase-rates', fetchDirectly, {
     refreshInterval: 6000,
     revalidateOnFocus: false
@@ -82,7 +91,6 @@ export function ExchangeRates() {
   const [selectedCrypto, setSelectedCrypto] = useState<string | null>(null);
   const [lastRates, setLastRates] = useState<{ [key: string]: number[] }>({});
 
-  // Process Data
   useEffect(() => {
     if (data && previousData.current) {
       const changes: { [key: string]: 'up' | 'down' | 'same' } = {};
@@ -133,7 +141,6 @@ export function ExchangeRates() {
     window.open(`${AFFILIATE_LINK}?coin=${key}`, '_blank');
   };
 
-  // Chart Logic
   const chartData = {
     labels: Array.from({ length: lastRates[selectedCrypto ?? '']?.length || 0 }, (_, i) => i + 1),
     datasets: [
@@ -156,17 +163,14 @@ export function ExchangeRates() {
     scales: { x: { display: false }, y: { display: true } },
   };
 
-  // --- RENDER ---
-
-  // 1. Error State
+  // ERROR STATE
   if (error) return (
     <div className="p-10 text-center text-red-500 bg-red-50 rounded-lg border border-red-200">
       <p className="font-bold">Unable to load exchange rates.</p>
-      <p className="text-sm mt-2">Please check your internet connection.</p>
     </div>
   );
   
-  // 2. Loading State
+  // LOADING STATE
   if ((!ready && !data) || (!data)) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-8 animate-pulse">
@@ -182,7 +186,7 @@ export function ExchangeRates() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
-        <h1 className="text-2xl font-extrabold text-gray-900">{t ? t('crypto_exchange_rates', 'Crypto Rates') : 'Crypto Rates'}</h1>
+        <h1 className="text-2xl font-extrabold text-gray-900">{safeT('crypto_exchange_rates', 'Crypto Rates')}</h1>
         <input
           type="text"
           placeholder="Search..."
@@ -270,7 +274,7 @@ export function ExchangeRates() {
             </div>
           }
         >
-          <div className="h-64 w-full bg-white">
+          <div className="h-64 w-full bg-white relative">
              <Line data={chartData} options={chartOptions} />
           </div>
           <div className="mt-6 flex gap-3">
