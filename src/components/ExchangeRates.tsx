@@ -17,7 +17,7 @@ import {
   ScriptableContext
 } from 'chart.js';
 
-// --- DYNAMIC IMPORT FOR CHART ---
+// --- DYNAMIC CHART IMPORT ---
 const Line = dynamic(() => import('react-chartjs-2').then((mod) => mod.Line), {
   ssr: false,
   loading: () => <div className="h-64 w-full bg-gray-800 animate-pulse rounded-md" />
@@ -30,7 +30,6 @@ if (typeof window !== 'undefined') {
 // --- CONFIG ---
 const AFFILIATE_LINK = "https://www.coinbase.com/join"; 
 
-// --- STATIC DATA: COIN NAMES (For better UX) ---
 const COIN_NAMES: { [key: string]: string } = {
   BTC: 'Bitcoin', ETH: 'Ethereum', USDT: 'Tether', BNB: 'BNB', SOL: 'Solana',
   XRP: 'XRP', USDC: 'USDC', ADA: 'Cardano', AVAX: 'Avalanche', DOGE: 'Dogecoin',
@@ -40,11 +39,9 @@ const COIN_NAMES: { [key: string]: string } = {
 
 // --- TYPES ---
 interface ExchangeRatesResponse {
-  data: { 
-    currency: string; 
-    rates: { [key: string]: string };
-  };
+  data: { currency: string; rates: { [key: string]: string }; };
 }
+type SortOption = 'rank' | 'name' | 'priceHigh' | 'priceLow';
 
 // --- HELPER: FORMAT CURRENCY ---
 const safeFormatCurrency = (amount: number, locale: string = 'en-US') => {
@@ -55,19 +52,18 @@ const safeFormatCurrency = (amount: number, locale: string = 'en-US') => {
   }
 };
 
-// --- HELPER: FETCHER ---
 const fetchDirectly = async (): Promise<ExchangeRatesResponse> => {
   const response = await fetch('https://api.coinbase.com/v2/exchange-rates?currency=EUR');
   if (!response.ok) throw new Error('Failed to fetch');
   return response.json();
 };
 
-// --- SUB-COMPONENT: DARK MODAL ---
+// --- MODAL COMPONENT ---
 const DarkModal = ({ isOpen, onClose, title, children }: { isOpen: boolean; onClose: () => void; title: React.ReactNode; children: React.ReactNode }) => {
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black bg-opacity-80 backdrop-blur-sm transition-opacity animate-in fade-in duration-200">
-      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[95vh]">
         <div className="px-6 py-4 border-b border-gray-800 flex justify-between items-center bg-gray-900 shrink-0">
           <div className="text-xl font-bold text-white">{title}</div>
           <button onClick={onClose} className="text-gray-400 hover:text-white transition bg-gray-800 p-2 rounded-full hover:bg-gray-700">
@@ -91,14 +87,15 @@ export function ExchangeRates() {
   // STATE
   const [searchTerm, setSearchTerm] = useState('');
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<'all' | 'favorites'>('all');
+  const [holdings, setHoldings] = useState<{ [key: string]: number }>({}); // Portfolio State
+  const [activeTab, setActiveTab] = useState<'all' | 'favorites' | 'portfolio'>('all');
+  const [sortBy, setSortBy] = useState<SortOption>('rank');
   
-  // Modal State
+  // Modal & Calc
   const [showModal, setShowModal] = useState(false);
   const [selectedCrypto, setSelectedCrypto] = useState<string | null>(null);
-  
-  // Calculator State
   const [calcAmount, setCalcAmount] = useState<string>('100');
+  const [holdingInput, setHoldingInput] = useState<string>(''); // For the input in modal
 
   const { data, error } = useSWR<ExchangeRatesResponse>('coinbase-rates', fetchDirectly, {
     refreshInterval: 6000,
@@ -109,34 +106,48 @@ export function ExchangeRates() {
   const [ratesChange, setRatesChange] = useState<{ [key: string]: 'up' | 'down' | 'same' }>({});
   const [mostGrowingCrypto, setMostGrowingCrypto] = useState<{ key: string, change: number, percent: number } | null>(null);
   const [lastRates, setLastRates] = useState<{ [key: string]: number[] }>({});
+  const [marketHealth, setMarketHealth] = useState({ up: 0, down: 0, total: 0 }); // Bull/Bear Meter
 
-  // --- EFFECT: LOAD FAVORITES ---
+  // --- LOAD LOCAL STORAGE ---
   useEffect(() => {
-    const saved = localStorage.getItem('cryptoFavorites');
-    if (saved) {
-      setFavorites(JSON.parse(saved));
-    }
+    const savedFavs = localStorage.getItem('cryptoFavorites');
+    const savedHoldings = localStorage.getItem('cryptoHoldings');
+    if (savedFavs) setFavorites(JSON.parse(savedFavs));
+    if (savedHoldings) setHoldings(JSON.parse(savedHoldings));
   }, []);
 
-  // --- FUNCTION: TOGGLE FAVORITE ---
+  // --- SAVE HOLDINGS ---
+  const updateHolding = (amount: string) => {
+    if (!selectedCrypto) return;
+    const val = parseFloat(amount);
+    const newHoldings = { ...holdings };
+    
+    if (isNaN(val) || val <= 0) {
+      delete newHoldings[selectedCrypto];
+    } else {
+      newHoldings[selectedCrypto] = val;
+    }
+    
+    setHoldings(newHoldings);
+    localStorage.setItem('cryptoHoldings', JSON.stringify(newHoldings));
+    setHoldingInput(amount);
+  };
+
   const toggleFavorite = (e: React.MouseEvent, key: string) => {
     e.stopPropagation();
-    let newFavs;
-    if (favorites.includes(key)) {
-      newFavs = favorites.filter(k => k !== key);
-    } else {
-      newFavs = [...favorites, key];
-    }
+    const newFavs = favorites.includes(key) ? favorites.filter(k => k !== key) : [...favorites, key];
     setFavorites(newFavs);
     localStorage.setItem('cryptoFavorites', JSON.stringify(newFavs));
   };
 
-  // --- EFFECT: DATA PROCESSING ---
+  // --- DATA PROCESSING EFFECT ---
   useEffect(() => {
     if (data && previousData.current) {
       const changes: { [key: string]: 'up' | 'down' | 'same' } = {};
       let maxGrowth = -Infinity;
       let mostGrowing = null;
+      let upCount = 0;
+      let downCount = 0;
 
       Object.keys(data.data.rates).forEach((key) => {
         const prevRates = previousData.current?.data.rates || {};
@@ -150,9 +161,9 @@ export function ExchangeRates() {
           mostGrowing = { key, change: growth, percent: percentChange };
         }
 
-        if (currentRate > previousRate) changes[key] = 'up';
-        else if (currentRate < previousRate) changes[key] = 'down';
-        else changes[key] = 'same';
+        if (currentRate > previousRate) { changes[key] = 'up'; upCount++; }
+        else if (currentRate < previousRate) { changes[key] = 'down'; downCount++; }
+        else { changes[key] = 'same'; }
 
         setLastRates((prev) => {
           const history = prev[key] ? [...prev[key]] : [];
@@ -163,24 +174,32 @@ export function ExchangeRates() {
       });
 
       setRatesChange(changes);
+      setMarketHealth({ up: upCount, down: downCount, total: upCount + downCount });
       if (mostGrowing) setMostGrowingCrypto(mostGrowing);
     }
-
     if (data) previousData.current = data;
   }, [data]);
 
-  // --- FILTER LOGIC ---
+  // --- CALCULATE TOTAL PORTFOLIO VALUE ---
+  const totalPortfolioValue = useMemo(() => {
+    if (!data) return 0;
+    return Object.entries(holdings).reduce((total, [key, amount]) => {
+      const rate = parseFloat(data.data.rates[key] || '0');
+      return total + (amount * rate);
+    }, 0);
+  }, [holdings, data]);
+
+  // --- FILTER & SORT LOGIC ---
   const filteredRates = useMemo(() => {
     if (!data) return [];
     
     let entries = Object.entries(data.data.rates);
     
-    // 1. Filter by Tab
-    if (activeTab === 'favorites') {
-      entries = entries.filter(([key]) => favorites.includes(key));
-    }
+    // 1. Filter Tab
+    if (activeTab === 'favorites') entries = entries.filter(([key]) => favorites.includes(key));
+    if (activeTab === 'portfolio') entries = entries.filter(([key]) => holdings[key] && holdings[key] > 0);
 
-    // 2. Filter by Search
+    // 2. Search
     if (searchTerm) {
       entries = entries.filter(([key]) => 
         key.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -188,8 +207,21 @@ export function ExchangeRates() {
       );
     }
 
+    // 3. Sorting
+    entries.sort((a, b) => {
+      const rateA = parseFloat(a[1]);
+      const rateB = parseFloat(b[1]);
+      
+      switch (sortBy) {
+        case 'priceHigh': return rateB - rateA;
+        case 'priceLow': return rateA - rateB;
+        case 'name': return a[0].localeCompare(b[0]);
+        default: return 0; // Rank/Default order
+      }
+    });
+
     return entries;
-  }, [data, searchTerm, activeTab, favorites]);
+  }, [data, searchTerm, activeTab, favorites, sortBy, holdings]);
 
   const handleTradeClick = (e: React.MouseEvent, key: string) => {
     e.stopPropagation();
@@ -198,188 +230,172 @@ export function ExchangeRates() {
 
   const baseURL = '/icons/';
 
-  // --- CHART CONFIG ---
+  // --- CHART OPTIONS ---
   const chartData = {
     labels: Array.from({ length: lastRates[selectedCrypto ?? '']?.length || 0 }, (_, i) => i + 1),
-    datasets: [
-      {
-        label: `${selectedCrypto}/EUR`,
-        data: lastRates[selectedCrypto ?? ''] || [],
-        fill: true,
-        backgroundColor: (context: ScriptableContext<'line'>) => {
-          const ctx = context.chart.ctx;
-          const gradient = ctx.createLinearGradient(0, 0, 0, 300);
-          gradient.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
-          gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
-          return gradient;
-        },
-        borderColor: '#10B981',
-        borderWidth: 2,
-        tension: 0.4,
-        pointRadius: 0,
-        pointHoverRadius: 4,
+    datasets: [{
+      label: `${selectedCrypto}/EUR`,
+      data: lastRates[selectedCrypto ?? ''] || [],
+      fill: true,
+      backgroundColor: (context: ScriptableContext<'line'>) => {
+        const ctx = context.chart.ctx;
+        const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+        gradient.addColorStop(0, 'rgba(16, 185, 129, 0.4)');
+        gradient.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
+        return gradient;
       },
-    ],
+      borderColor: '#10B981',
+      borderWidth: 2,
+      tension: 0.4,
+      pointRadius: 0,
+    }],
   };
 
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
-    scales: { 
-      x: { display: false }, 
-      y: { display: true, grid: { color: '#374151' }, ticks: { color: '#9CA3AF' } } 
-    },
+    scales: { x: { display: false }, y: { display: true, grid: { color: '#374151' }, ticks: { color: '#9CA3AF' } } },
   };
 
-  // --- ERROR STATE ---
-  if (error) return (
-    <div className="min-h-screen bg-black text-white flex items-center justify-center">
-       <div className="text-center p-6 bg-gray-900 rounded-xl border border-gray-800">
-         <p className="text-red-400 mb-2">⚠ Unable to connect to market data.</p>
-         <button onClick={() => window.location.reload()} className="text-sm bg-gray-800 px-3 py-1 rounded">Retry</button>
-       </div>
-    </div>
-  );
+  // --- LOADING / ERROR ---
+  if (error) return <div className="min-h-screen bg-black text-white flex items-center justify-center">Error loading data.</div>;
+  if ((!ready && !data) || (!data)) return <div className="min-h-screen bg-black text-white p-10">Loading...</div>;
 
-  // --- LOADING STATE ---
-  if ((!ready && !data) || (!data)) {
-    return (
-      <div className="min-h-screen bg-black max-w-7xl mx-auto px-4 py-8">
-         <div className="h-12 w-full md:w-1/2 bg-gray-900 rounded mb-8 animate-pulse"></div>
-         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {[...Array(9)].map((_, i) => <div key={i} className="h-32 bg-gray-900 rounded-xl animate-pulse"></div>)}
-         </div>
-      </div>
-    );
-  }
+  // --- OPEN MODAL HANDLER ---
+  const openModal = (key: string) => {
+    setSelectedCrypto(key);
+    setHoldingInput(holdings[key] ? holdings[key].toString() : '');
+    setShowModal(true);
+  };
 
-  // --- CALCULATOR LOGIC ---
   const selectedRate = selectedCrypto ? parseFloat(data.data.rates[selectedCrypto]) : 0;
   const cryptoAmount = selectedRate > 0 && calcAmount ? (parseFloat(calcAmount) / selectedRate).toFixed(6) : '0';
 
   return (
     <div className="min-h-screen bg-black text-white font-sans selection:bg-green-500 selection:text-black pb-20">
       
-      {/* HEADER */}
-      <div className="sticky top-0 z-40 backdrop-blur-md bg-black/50 border-b border-gray-800">
+      {/* 1. HEADER & TOTAL BALANCE */}
+      <div className="sticky top-0 z-40 backdrop-blur-md bg-black/80 border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-tr from-green-400 to-blue-500 rounded-lg shadow-lg shadow-green-500/20"></div>
-            <h1 className="text-xl md:text-2xl font-bold tracking-tight text-white hidden sm:block">
-              Crypto<span className="text-green-400">Market</span>
-            </h1>
+            <div className="w-8 h-8 bg-gradient-to-tr from-green-400 to-blue-500 rounded-lg shadow-lg"></div>
+            <h1 className="text-xl font-bold tracking-tight hidden sm:block">Crypto<span className="text-green-400">Market</span></h1>
           </div>
           
-          <div className="flex gap-4">
-            <input
-              type="text"
-              placeholder={safeT('search_crypto', 'Search...')}
-              className="bg-gray-900 border border-gray-700 text-white text-sm rounded-full focus:ring-2 focus:ring-green-500 focus:border-transparent block w-32 md:w-64 pl-4 p-2.5 transition-all outline-none"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+          {/* TOTAL BALANCE DISPLAY */}
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Total Portfolio</span>
+            <div className={`font-mono font-bold text-xl ${totalPortfolioValue > 0 ? 'text-green-400' : 'text-gray-500'}`}>
+              {safeFormatCurrency(totalPortfolioValue, locale!)}
+            </div>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        {/* 2. MARKET SENTIMENT BAR */}
+        <div className="mb-8 bg-gray-900 rounded-full h-2 overflow-hidden flex w-full">
+           <div style={{ width: `${(marketHealth.up / marketHealth.total) * 100}%` }} className="bg-green-500 h-full transition-all duration-1000"></div>
+           <div style={{ width: `${(marketHealth.down / marketHealth.total) * 100}%` }} className="bg-red-500 h-full transition-all duration-1000"></div>
+        </div>
         
-        {/* TOP PERFORMER BANNER */}
-        {mostGrowingCrypto && !searchTerm && activeTab === 'all' && (
-          <div className="mb-8 relative overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 to-gray-800 border border-gray-700 group cursor-pointer" onClick={() => { setSelectedCrypto(mostGrowingCrypto?.key || null); setShowModal(true); }}>
-             <div className="absolute top-0 right-0 -mr-20 -mt-20 w-64 h-64 bg-green-500 opacity-10 blur-[80px] rounded-full"></div>
-             <div className="relative z-10 p-6 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                   <img src={`${baseURL}${mostGrowingCrypto.key.toLowerCase()}.png`} onError={(e) => { e.currentTarget.src = `${baseURL}generic.png`; }} className="h-14 w-14 rounded-full bg-gray-800 border-2 border-green-500/30" alt={mostGrowingCrypto.key} />
-                   <div>
-                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-green-900/50 text-green-300 border border-green-800 uppercase tracking-wide">Top Gainer 24h</span>
-                     <h2 className="text-2xl font-bold text-white mt-1">{COIN_NAMES[mostGrowingCrypto.key] || mostGrowingCrypto.key}</h2>
-                     <p className="text-green-400 font-mono font-bold">+{mostGrowingCrypto.percent.toFixed(2)}%</p>
-                   </div>
-                </div>
-                <div className="hidden sm:block">
-                  <span className="text-gray-400 text-sm mr-2">Market Price</span>
-                  <span className="text-xl font-mono font-bold">{safeFormatCurrency(parseFloat(data.data.rates[mostGrowingCrypto.key]), locale!)}</span>
-                </div>
-             </div>
-          </div>
-        )}
-
-        {/* TABS */}
-        <div className="flex gap-2 mb-6 border-b border-gray-800 pb-1">
-          <button 
-            onClick={() => setActiveTab('all')}
-            className={`px-4 py-2 text-sm font-bold rounded-t-lg transition-colors ${activeTab === 'all' ? 'text-green-400 border-b-2 border-green-400 bg-gray-900/50' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            All Assets
-          </button>
-          <button 
-            onClick={() => setActiveTab('favorites')}
-            className={`px-4 py-2 text-sm font-bold rounded-t-lg transition-colors flex items-center gap-2 ${activeTab === 'favorites' ? 'text-green-400 border-b-2 border-green-400 bg-gray-900/50' : 'text-gray-500 hover:text-gray-300'}`}
-          >
-            <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>
-            Watchlist ({favorites.length})
-          </button>
-        </div>
-
-        {/* EMPTY STATE FOR FAVORITES */}
-        {activeTab === 'favorites' && favorites.length === 0 && (
-          <div className="text-center py-20 bg-gray-900/50 rounded-xl border border-dashed border-gray-800">
-            <svg className="w-16 h-16 text-gray-700 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
-            <h3 className="text-xl font-bold text-gray-400">Your Watchlist is empty</h3>
-            <p className="text-gray-500">Star coins to track them here.</p>
-            <button onClick={() => setActiveTab('all')} className="mt-4 text-green-500 hover:text-green-400 font-bold">Browse Coins</button>
-          </div>
-        )}
-
-        {/* GRID */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filteredRates.map(([key, value]) => (
-            <div
-              key={key}
-              onClick={() => { setSelectedCrypto(key); setShowModal(true); }}
-              className="group bg-gray-900 border border-gray-800 hover:border-gray-600 rounded-xl p-4 cursor-pointer transition-all duration-200 hover:shadow-xl hover:bg-gray-800 relative"
-            >
-              {/* Star Button */}
+        {/* 3. CONTROLS: TABS & SORT & SEARCH */}
+        <div className="flex flex-col md:flex-row gap-4 mb-6 justify-between items-end md:items-center border-b border-gray-800 pb-4">
+          
+          {/* Tabs */}
+          <div className="flex bg-gray-900 p-1 rounded-lg">
+            {(['all', 'favorites', 'portfolio'] as const).map((tab) => (
               <button 
-                onClick={(e) => toggleFavorite(e, key)}
-                className={`absolute top-3 right-3 p-1.5 rounded-full z-20 transition-all ${favorites.includes(key) ? 'text-yellow-400 bg-yellow-400/10' : 'text-gray-700 hover:text-gray-400 bg-gray-800'}`}
+                key={tab}
+                onClick={() => setActiveTab(tab)}
+                className={`px-4 py-2 text-sm font-bold rounded-md transition-colors capitalize ${activeTab === tab ? 'bg-gray-800 text-white shadow' : 'text-gray-500 hover:text-gray-300'}`}
               >
-                <svg className="w-5 h-5" fill={favorites.includes(key) ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                {tab}
               </button>
+            ))}
+          </div>
 
-              <div className="flex items-center gap-3 mb-3">
-                <img 
-                  src={`${baseURL}${key.toLowerCase()}.png`} 
-                  onError={(e) => { e.currentTarget.src = `${baseURL}generic.png`; }} 
-                  className="h-10 w-10 rounded-full bg-gray-800 p-1 border border-gray-700" 
-                  alt={key} 
-                />
-                <div className="overflow-hidden">
-                  <h3 className="font-bold text-white leading-none truncate pr-6">{COIN_NAMES[key] || key}</h3>
-                  <span className="text-xs text-gray-500 font-mono">{key}</span>
-                </div>
-              </div>
+          <div className="flex gap-2 w-full md:w-auto">
+             {/* Sort Dropdown */}
+             <select 
+               className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg p-2.5 outline-none focus:border-green-500"
+               value={sortBy}
+               onChange={(e) => setSortBy(e.target.value as SortOption)}
+             >
+               <option value="rank">Default Rank</option>
+               <option value="priceHigh">Price: High to Low</option>
+               <option value="priceLow">Price: Low to High</option>
+               <option value="name">Name: A-Z</option>
+             </select>
 
-              <div className="flex justify-between items-end">
-                <div className="text-lg font-mono font-medium text-gray-200 group-hover:text-white">
-                  {safeFormatCurrency(parseFloat(value), locale!)}
-                </div>
-                <div className={`text-xs font-bold flex items-center px-1.5 py-0.5 rounded ${
-                  ratesChange[key] === 'up' ? 'text-green-400 bg-green-900/20' : 
-                  ratesChange[key] === 'down' ? 'text-red-400 bg-red-900/20' : 'text-gray-500'
-                }`}>
-                   {ratesChange[key] === 'up' && '▲'}
-                   {ratesChange[key] === 'down' && '▼'}
-                </div>
-              </div>
-            </div>
-          ))}
+             {/* Search */}
+             <input
+              type="text"
+              placeholder={safeT('search_crypto', 'Search...')}
+              className="bg-gray-900 border border-gray-700 text-white text-sm rounded-lg p-2.5 w-full md:w-48 outline-none focus:border-green-500"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
         </div>
+
+        {/* 4. MAIN GRID */}
+        {filteredRates.length === 0 ? (
+          <div className="text-center py-20 text-gray-500">No coins found.</div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {filteredRates.map(([key, value]) => (
+              <div
+                key={key}
+                onClick={() => openModal(key)}
+                className={`group bg-gray-900 border rounded-xl p-4 cursor-pointer transition-all duration-200 hover:shadow-xl hover:bg-gray-800 relative ${holdings[key] ? 'border-green-500/30 bg-green-900/5' : 'border-gray-800 hover:border-gray-600'}`}
+              >
+                {/* Favorite Star */}
+                <button 
+                  onClick={(e) => toggleFavorite(e, key)}
+                  className={`absolute top-3 right-3 p-1.5 rounded-full z-20 ${favorites.includes(key) ? 'text-yellow-400' : 'text-gray-700 hover:text-white'}`}
+                >
+                  <svg className="w-5 h-5" fill={favorites.includes(key) ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg>
+                </button>
+
+                <div className="flex items-center gap-3 mb-4">
+                  <img src={`${baseURL}${key.toLowerCase()}.png`} onError={(e) => { e.currentTarget.src = `${baseURL}generic.png`; }} className="h-10 w-10 rounded-full bg-gray-800 border border-gray-700" alt={key} />
+                  <div className="overflow-hidden">
+                    <h3 className="font-bold text-white leading-none truncate pr-6">{COIN_NAMES[key] || key}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs text-gray-500 font-mono">{key}</span>
+                      {holdings[key] && <span className="text-[10px] bg-green-900 text-green-300 px-1.5 rounded border border-green-700">OWNED</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-end">
+                  <div>
+                    <div className="text-lg font-mono font-medium text-gray-200">
+                      {safeFormatCurrency(parseFloat(value), locale!)}
+                    </div>
+                    {/* Show Portfolio Value for this Coin */}
+                    {holdings[key] && (
+                       <div className="text-xs text-green-400 font-mono mt-1">
+                         Your val: {safeFormatCurrency(parseFloat(value) * holdings[key], locale!)}
+                       </div>
+                    )}
+                  </div>
+                  
+                  <div className={`text-xs font-bold flex items-center px-1.5 py-0.5 rounded ${ratesChange[key] === 'up' ? 'text-green-400' : ratesChange[key] === 'down' ? 'text-red-400' : 'text-gray-500'}`}>
+                     {ratesChange[key] === 'up' && '▲'}
+                     {ratesChange[key] === 'down' && '▼'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* MODAL & CALCULATOR */}
+      {/* 5. ENHANCED MODAL */}
       {showModal && selectedCrypto && (
         <DarkModal
           isOpen={showModal}
@@ -389,55 +405,61 @@ export function ExchangeRates() {
                <img src={`${baseURL}${selectedCrypto.toLowerCase()}.png`} onError={(e) => e.currentTarget.src = `${baseURL}generic.png`} className="h-8 w-8" alt=""/>
                <div>
                   <div className="font-bold">{COIN_NAMES[selectedCrypto] || selectedCrypto}</div>
-                  <div className="text-xs text-gray-400 font-normal">Current Price: {safeFormatCurrency(selectedRate, locale!)}</div>
+                  <div className="text-xs text-gray-400 font-normal">Price: {safeFormatCurrency(selectedRate, locale!)}</div>
                </div>
             </div>
           }
         >
           {/* CHART */}
-          <div className="h-64 w-full bg-gray-900 rounded-lg p-2 border border-gray-800 mb-6">
+          <div className="h-64 w-full bg-gray-900 rounded-lg p-2 border border-gray-800 mb-6 relative">
              <Line data={chartData} options={chartOptions} />
           </div>
 
-          {/* CALCULATOR */}
-          <div className="bg-gray-800/50 rounded-xl p-4 mb-6 border border-gray-700">
-             <h4 className="text-sm font-bold text-gray-400 uppercase mb-3 flex items-center gap-2">
-               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-               Instant Converter
-             </h4>
-             <div className="flex items-center gap-4">
-               <div className="flex-1">
-                 <label className="text-xs text-gray-500 block mb-1">Amount (EUR)</label>
-                 <input 
-                    type="number" 
-                    value={calcAmount}
-                    onChange={(e) => setCalcAmount(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-600 rounded-lg p-2 text-white font-mono focus:border-green-500 focus:ring-1 focus:ring-green-500 outline-none"
-                 />
-               </div>
-               <div className="text-gray-500 mt-5">→</div>
-               <div className="flex-1">
-                 <label className="text-xs text-gray-500 block mb-1">You Get ({selectedCrypto})</label>
-                 <div className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-green-400 font-mono font-bold">
-                   {cryptoAmount}
-                 </div>
-               </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+             {/* LEFT: CALCULATOR */}
+             <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
+                <h4 className="text-xs font-bold text-gray-400 uppercase mb-3">Instant Converter</h4>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] text-gray-500 uppercase">Amount (EUR)</label>
+                    <input type="number" value={calcAmount} onChange={(e) => setCalcAmount(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono focus:border-green-500 outline-none" />
+                  </div>
+                  <div className="text-center text-gray-600">↓</div>
+                  <div>
+                    <label className="text-[10px] text-gray-500 uppercase">You Get ({selectedCrypto})</label>
+                    <div className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-green-400 font-mono font-bold">{cryptoAmount}</div>
+                  </div>
+                </div>
+             </div>
+
+             {/* RIGHT: PORTFOLIO MANAGER */}
+             <div className="bg-green-900/10 rounded-xl p-4 border border-green-500/20">
+                <h4 className="text-xs font-bold text-green-400 uppercase mb-3">Your Portfolio</h4>
+                <p className="text-xs text-gray-400 mb-2">How much {selectedCrypto} do you own?</p>
+                <div className="flex gap-2">
+                   <input 
+                      type="number" 
+                      placeholder="0.00" 
+                      value={holdingInput}
+                      onChange={(e) => setHoldingInput(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white font-mono focus:border-green-500 outline-none" 
+                   />
+                   <button onClick={() => updateHolding(holdingInput)} className="bg-green-600 hover:bg-green-500 text-white px-3 rounded font-bold">Save</button>
+                </div>
+                {holdings[selectedCrypto] && (
+                   <div className="mt-3 pt-3 border-t border-gray-700">
+                      <div className="flex justify-between text-sm">
+                         <span className="text-gray-400">Value:</span>
+                         <span className="font-mono font-bold text-white">{safeFormatCurrency(holdings[selectedCrypto] * selectedRate, locale!)}</span>
+                      </div>
+                   </div>
+                )}
              </div>
           </div>
 
           <div className="flex gap-3">
-            <button 
-              onClick={(e) => handleTradeClick(e, selectedCrypto)} 
-              className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl shadow-lg transition active:scale-95"
-            >
-              Buy {selectedCrypto}
-            </button>
-            <button 
-              onClick={() => setShowModal(false)} 
-              className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded-xl transition"
-            >
-              Close
-            </button>
+            <button onClick={(e) => handleTradeClick(e, selectedCrypto)} className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl shadow-lg transition active:scale-95">Buy on Coinbase</button>
+            <button onClick={() => setShowModal(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 rounded-xl transition">Close</button>
           </div>
         </DarkModal>
       )}
